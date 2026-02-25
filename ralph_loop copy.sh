@@ -198,25 +198,28 @@ setup_tmux_session() {
     base_win=$(get_tmux_base_index)
 
     log_status "INFO" "Setting up tmux session: $session_name"
-    log_status "INFO" "Project directory: $project_dir"
-    log_status "INFO" "Ralph home: $ralph_home"
-    log_status "INFO" "Tmux base window index: $base_win"
 
     # Initialize live.log file
-    log_status "INFO" "Initializing live log file: $project_dir/$LIVE_LOG_FILE"
     echo "=== Ralph Live Output - Waiting for first loop... ===" > "$LIVE_LOG_FILE"
 
-    # Create new tmux session detached (left pane - current session / Ralph loop)
-    log_status "INFO" "Creating detached tmux session: $session_name"
+    # Create new tmux session detached (left pane - Ralph loop)
     tmux new-session -d -s "$session_name" -c "$project_dir"
 
-    # Split window vertically into two panes: left (Ralph loop) | right (live output)
-    log_status "INFO" "Splitting window into left and right panes"
+    # Split window vertically (right side)
     tmux split-window -h -t "$session_name" -c "$project_dir"
 
-    # Right pane (pane 1): Live Claude Code output with verbose tail
-    log_status "INFO" "Starting verbose tail of live log in right pane (pane 1)"
-    tmux send-keys -t "$session_name:${base_win}.1" "tail -f -v '$project_dir/$LIVE_LOG_FILE'" Enter
+    # Split right pane horizontally (top: Claude output, bottom: status)
+    tmux split-window -v -t "$session_name:${base_win}.1" -c "$project_dir"
+
+    # Right-top pane (pane 1): Live Claude Code output
+    tmux send-keys -t "$session_name:${base_win}.1" "tail -f '$project_dir/$LIVE_LOG_FILE'" Enter
+
+    # Right-bottom pane (pane 2): Ralph status monitor
+    if command -v ralph-monitor &> /dev/null; then
+        tmux send-keys -t "$session_name:${base_win}.2" "ralph-monitor" Enter
+    else
+        tmux send-keys -t "$session_name:${base_win}.2" "'$ralph_home/ralph_monitor.sh'" Enter
+    fi
 
     # Start ralph loop in the left pane (exclude tmux flag to avoid recursion)
     # Forward all CLI parameters that were set by the user
@@ -226,76 +229,69 @@ setup_tmux_session() {
     else
         ralph_cmd="'$ralph_home/ralph_loop.sh'"
     fi
-    log_status "INFO" "Base ralph command: $ralph_cmd"
 
     # Always use --live mode in tmux for real-time streaming
     ralph_cmd="$ralph_cmd --live"
-    # Always use --verbose in tmux for maximum output detail
-    ralph_cmd="$ralph_cmd --verbose"
 
     # Forward --calls if non-default
     if [[ "$MAX_CALLS_PER_HOUR" != "100" ]]; then
         ralph_cmd="$ralph_cmd --calls $MAX_CALLS_PER_HOUR"
-        log_status "INFO" "Forwarding --calls $MAX_CALLS_PER_HOUR"
     fi
     # Forward --prompt if non-default
     if [[ "$PROMPT_FILE" != "$RALPH_DIR/PROMPT.md" ]]; then
         ralph_cmd="$ralph_cmd --prompt '$PROMPT_FILE'"
-        log_status "INFO" "Forwarding --prompt '$PROMPT_FILE'"
     fi
     # Forward --output-format if non-default (default is json)
     if [[ "$CLAUDE_OUTPUT_FORMAT" != "json" ]]; then
         ralph_cmd="$ralph_cmd --output-format $CLAUDE_OUTPUT_FORMAT"
-        log_status "INFO" "Forwarding --output-format $CLAUDE_OUTPUT_FORMAT"
+    fi
+    # Forward --verbose if enabled
+    if [[ "$VERBOSE_PROGRESS" == "true" ]]; then
+        ralph_cmd="$ralph_cmd --verbose"
     fi
     # Forward --timeout if non-default (default is 15)
     if [[ "$CLAUDE_TIMEOUT_MINUTES" != "15" ]]; then
         ralph_cmd="$ralph_cmd --timeout $CLAUDE_TIMEOUT_MINUTES"
-        log_status "INFO" "Forwarding --timeout $CLAUDE_TIMEOUT_MINUTES"
     fi
     # Forward --allowed-tools if non-default
     if [[ "$CLAUDE_ALLOWED_TOOLS" != "Write,Read,Edit,Bash(git *),Bash(npm *),Bash(pytest)" ]]; then
         ralph_cmd="$ralph_cmd --allowed-tools '$CLAUDE_ALLOWED_TOOLS'"
-        log_status "INFO" "Forwarding --allowed-tools '$CLAUDE_ALLOWED_TOOLS'"
     fi
     # Forward --no-continue if session continuity disabled
     if [[ "$CLAUDE_USE_CONTINUE" == "false" ]]; then
         ralph_cmd="$ralph_cmd --no-continue"
-        log_status "INFO" "Forwarding --no-continue"
     fi
     # Forward --session-expiry if non-default (default is 24)
     if [[ "$CLAUDE_SESSION_EXPIRY_HOURS" != "24" ]]; then
         ralph_cmd="$ralph_cmd --session-expiry $CLAUDE_SESSION_EXPIRY_HOURS"
-        log_status "INFO" "Forwarding --session-expiry $CLAUDE_SESSION_EXPIRY_HOURS"
     fi
     # Forward --auto-reset-circuit if enabled
     if [[ "$CB_AUTO_RESET" == "true" ]]; then
         ralph_cmd="$ralph_cmd --auto-reset-circuit"
-        log_status "INFO" "Forwarding --auto-reset-circuit"
     fi
 
-    log_status "INFO" "Full ralph command: $ralph_cmd"
     tmux send-keys -t "$session_name:${base_win}.0" "$ralph_cmd" Enter
 
-    # Focus on left pane (current session / main ralph loop)
+    # Focus on left pane (main ralph loop)
     tmux select-pane -t "$session_name:${base_win}.0"
 
     # Set pane titles (requires tmux 2.6+)
     tmux select-pane -t "$session_name:${base_win}.0" -T "Ralph Loop"
     tmux select-pane -t "$session_name:${base_win}.1" -T "Claude Output"
+    tmux select-pane -t "$session_name:${base_win}.2" -T "Status"
 
     # Set window title
-    tmux rename-window -t "$session_name:${base_win}" "Ralph: Loop | Output"
+    tmux rename-window -t "$session_name:${base_win}" "Ralph: Loop | Output | Status"
 
-    log_status "SUCCESS" "Tmux session '$session_name' created with 2 panes:"
-    log_status "INFO" "  Left:  Ralph loop (current session)"
-    log_status "INFO" "  Right: Live Claude Code output (verbose)"
+    log_status "SUCCESS" "Tmux session created with 3 panes:"
+    log_status "INFO" "  Left:         Ralph loop"
+    log_status "INFO" "  Right-top:    Claude Code live output"
+    log_status "INFO" "  Right-bottom: Status monitor"
     log_status "INFO" ""
     log_status "INFO" "Use Ctrl+B then D to detach from session"
     log_status "INFO" "Use 'tmux attach -t $session_name' to reattach"
 
     # Attach to session (this will block until session ends)
-    log_status "INFO" "Attaching to tmux session..."
     tmux attach-session -t "$session_name"
 
     exit 0
