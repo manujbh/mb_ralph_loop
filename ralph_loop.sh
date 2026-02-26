@@ -303,7 +303,6 @@ setup_tmux_session() {
 
 # Initialize call tracking
 init_call_tracking() {
-    # Debug logging removed for cleaner output
     local current_hour=$(date +%Y%m%d%H)
     local last_reset_hour=""
 
@@ -444,7 +443,6 @@ should_exit_gracefully() {
     recent_done_signals=$(echo "$signals" | jq '.done_signals | length' 2>/dev/null || echo "0")
     recent_completion_indicators=$(echo "$signals" | jq '.completion_indicators | length' 2>/dev/null || echo "0")
     
-
     # Check for exit conditions
 
     # 0. Permission denials (highest priority - Issue #101)
